@@ -1,0 +1,35 @@
+services:
+  tileserver:
+    image: maptiler/tileserver-gl:latest
+    container_name: osm-indonesia-tileserver
+    restart: unless-stopped
+    # no ports exposed publicly
+    volumes:
+      - ./data:/data
+      - ./config:/config
+    command: ["--config", "/config/config.json"]
+
+  proxy:
+    build: .
+    container_name: osm-indonesia-proxy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      REDIS_ADDR: redis:6379
+      TILE_SERVER_URL: http://tileserver:8080
+      LISTEN_ADDR: :3000
+    depends_on:
+      - tileserver
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    container_name: osm-indonesia-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:

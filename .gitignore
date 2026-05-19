@@ -1,0 +1,4 @@
+# OSM data files
+data/
+tilemaker/coastline/
+tilemaker/*.zip

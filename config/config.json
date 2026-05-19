@@ -1,0 +1,18 @@
+{
+  "options": {
+    "paths": {
+      "root": "/config",
+      "mbtiles": "/data"
+    }
+  },
+  "data": {
+    "indonesia": {
+      "mbtiles": "indonesia.mbtiles"
+    }
+  },
+  "styles": {
+    "positron": {
+      "style": "positron/style.json"
+    }
+  }
+}
