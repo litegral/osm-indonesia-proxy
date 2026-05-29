@@ -12,7 +12,10 @@ CONFIG_DIR="$SCRIPT_DIR/config"
 TILEMAKER_DIR="$SCRIPT_DIR/tilemaker"
 LOG_FILE="$SCRIPT_DIR/setup.log"
 
-PBF_URL="https://download.geofabrik.de/asia/indonesia-latest.osm.pbf"
+# PBF_URL is set dynamically based on server region in detect_region()
+PBF_URL_GEOFABRIK="https://download.geofabrik.de/asia/indonesia-latest.osm.pbf"
+PBF_URL_ASIA="https://download.geofabrik.de/asia/indonesia-latest.osm.pbf"
+PBF_URL=""
 COASTLINE_URL="https://osmdata.openstreetmap.de/download/water-polygons-split-4326.zip"
 PBF_FILE="$DATA_DIR/indonesia-latest.osm.pbf"
 MBTILES_FILE="$DATA_DIR/indonesia-z19.mbtiles"
@@ -126,6 +129,71 @@ cleanup_on_error() {
 trap cleanup_on_error EXIT
 
 # =============================================================================
+# region detection + mirror selection
+# =============================================================================
+
+detect_region() {
+  log "Detecting server region for optimal download mirror..."
+
+  local continent=""
+  local country=""
+  local region_label=""
+
+  # try multiple IP geolocation APIs in case one is down
+  local geo_response=""
+  for api in \
+    "https://ipapi.co/json/" \
+    "https://ipwho.is/" \
+    "https://ip-api.com/json/"; do
+    geo_response=$(curl -sf --max-time 5 "$api" 2>/dev/null || true)
+    if [[ -n "$geo_response" ]]; then
+      break
+    fi
+  done
+
+  if [[ -n "$geo_response" ]]; then
+    # extract continent -- different APIs use different keys
+    continent=$(echo "$geo_response" | grep -o '"continent[_code]*": *"[^"]*"' | head -1 | grep -o '"[A-Za-z ]*"$' | tr -d '"' || true)
+    country=$(echo "$geo_response" | grep -o '"country[_code]*": *"[^"]*"' | head -1 | grep -o '"[A-Z]*"$' | tr -d '"' || true)
+  fi
+
+  # pick mirror based on detected region
+  # geofabrik has regional mirrors but indonesia extract only lives in /asia/
+  # the difference is routing -- european servers get better speeds direct from geofabrik.de
+  # asian servers benefit from parallel connections to overcome the DE→Asia latency
+  case "$continent" in
+    AS|"Asia")
+      region_label="Asia"
+      PBF_URL="$PBF_URL_GEOFABRIK"
+      ARIA2C_CONNECTIONS=16  # parallel connections help overcome DE→Asia latency
+      ;;
+    EU|"Europe")
+      region_label="Europe"
+      PBF_URL="$PBF_URL_GEOFABRIK"
+      ARIA2C_CONNECTIONS=4   # close to geofabrik servers, fewer connections needed
+      ;;
+    NA|"North America")
+      region_label="North America"
+      PBF_URL="$PBF_URL_GEOFABRIK"
+      ARIA2C_CONNECTIONS=8
+      ;;
+    *)
+      region_label="Unknown"
+      PBF_URL="$PBF_URL_GEOFABRIK"
+      ARIA2C_CONNECTIONS=8
+      ;;
+  esac
+
+  if [[ -n "$country" ]]; then
+    success "Detected region: $region_label ($country) -- using $ARIA2C_CONNECTIONS parallel connections"
+  else
+    warn "Could not detect region -- defaulting to $ARIA2C_CONNECTIONS parallel connections"
+    PBF_URL="$PBF_URL_GEOFABRIK"
+    ARIA2C_CONNECTIONS=8
+  fi
+}
+
+# =============================================================================
 # step 0: requirements check
 # =============================================================================
 
@@ -144,10 +212,11 @@ check_requirements() {
 
   # --- required commands ---
   log "Required commands:"
-  check_cmd "docker"  "https://docs.docker.com/engine/install/" required  || ((failures++))
-  check_cmd "wget"    "apt install wget / yum install wget"     required  || ((failures++))
-  check_cmd "curl"    "apt install curl / yum install curl"     required  || ((failures++))
-  check_cmd "unzip"   "apt install unzip / yum install unzip"   required  || ((failures++))
+  check_cmd "docker"   "https://docs.docker.com/engine/install/" required  || ((failures++))
+  check_cmd "aria2c"   "apt install aria2 / yum install aria2"   required  || ((failures++))
+  check_cmd "wget"     "apt install wget / yum install wget"      required  || ((failures++))
+  check_cmd "curl"     "apt install curl / yum install curl"      required  || ((failures++))
+  check_cmd "unzip"    "apt install unzip / yum install unzip"    required  || ((failures++))
 
   # --- optional but useful ---
   log "Optional commands:"
@@ -300,15 +369,22 @@ download_pbf() {
   log "Downloading Indonesia OSM extract from Geofabrik..."
   detail "URL: $PBF_URL"
   detail "Destination: $PBF_FILE"
-  detail "Tip: this is ~600MB-1GB from Germany -- grab a coffee."
+  detail "Using $ARIA2C_CONNECTIONS parallel connections"
 
-  # wget -c resumes interrupted downloads automatically -- no .tmp dance needed
-  if wget -c --progress=bar:force --tries=5 --waitretry=10 -O "$PBF_FILE" "$PBF_URL"; then
+  # aria2c -c resumes interrupted downloads, -x parallel connections
+  # dir + out instead of full path to avoid double-path bug
+  if aria2c -c \
+    -x "$ARIA2C_CONNECTIONS" \
+    -s "$ARIA2C_CONNECTIONS" \
+    -k 1M \
+    --dir="$DATA_DIR" \
+    --out="indonesia-latest.osm.pbf" \
+    "$PBF_URL"; then
     local size_mb
     size_mb=$(file_size_mb "$PBF_FILE")
     success "PBF downloaded: $PBF_FILE (${size_mb}MB)"
   else
-    error "Download failed. Check your internet connection and try again.\n        If it keeps failing, try manually: wget -c $PBF_URL -O $PBF_FILE"
+    error "Download failed. Resume manually with:\n        aria2c -c -x 16 -s 16 -k 1M --dir=$DATA_DIR --out=indonesia-latest.osm.pbf $PBF_URL"
   fi
 }
 
@@ -610,6 +686,7 @@ main() {
   echo "================================================"
 
   check_requirements
+  detect_region
   download_pbf
   download_coastline
   generate_mbtiles
