@@ -145,6 +145,7 @@ check_requirements() {
   # --- required commands ---
   log "Required commands:"
   check_cmd "docker"  "https://docs.docker.com/engine/install/" required  || ((failures++))
+  check_cmd "wget"    "apt install wget / yum install wget"     required  || ((failures++))
   check_cmd "curl"    "apt install curl / yum install curl"     required  || ((failures++))
   check_cmd "unzip"   "apt install unzip / yum install unzip"   required  || ((failures++))
 
@@ -299,17 +300,15 @@ download_pbf() {
   log "Downloading Indonesia OSM extract from Geofabrik..."
   detail "URL: $PBF_URL"
   detail "Destination: $PBF_FILE"
+  detail "Tip: this is ~600MB-1GB from Germany -- grab a coffee."
 
-  # download to temp file first to avoid partial file being used
-  local tmp_file="${PBF_FILE}.tmp"
-  if curl -L --progress-bar --fail --retry 3 --retry-delay 5 -o "$tmp_file" "$PBF_URL"; then
-    mv "$tmp_file" "$PBF_FILE"
+  # wget -c resumes interrupted downloads automatically -- no .tmp dance needed
+  if wget -c --progress=bar:force --tries=5 --waitretry=10 -O "$PBF_FILE" "$PBF_URL"; then
     local size_mb
     size_mb=$(file_size_mb "$PBF_FILE")
     success "PBF downloaded: $PBF_FILE (${size_mb}MB)"
   else
-    rm -f "$tmp_file"
-    error "Download failed. Check your internet connection and try again."
+    error "Download failed. Check your internet connection and try again.\n        If it keeps failing, try manually: wget -c $PBF_URL -O $PBF_FILE"
   fi
 }
 
@@ -334,11 +333,8 @@ download_coastline() {
   detail "URL: $COASTLINE_URL"
   detail "Destination: $COASTLINE_ZIP"
 
-  local tmp_zip="${COASTLINE_ZIP}.tmp"
-  if curl -L --progress-bar --fail --retry 3 --retry-delay 5 -o "$tmp_zip" "$COASTLINE_URL"; then
-    mv "$tmp_zip" "$COASTLINE_ZIP"
-  else
-    rm -f "$tmp_zip"
+  if ! wget -c --progress=bar:force --tries=5 --waitretry=10 -O "$COASTLINE_ZIP" "$COASTLINE_URL"; then
+    rm -f "$COASTLINE_ZIP"
     error "Coastline download failed."
   fi
 
