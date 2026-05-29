@@ -408,10 +408,17 @@ download_coastline() {
   log "Downloading coastline from OSM..."
   detail "URL: $COASTLINE_URL"
   detail "Destination: $COASTLINE_ZIP"
+  detail "Using $ARIA2C_CONNECTIONS parallel connections"
 
-  if ! wget -c --progress=bar:force --tries=5 --waitretry=10 -O "$COASTLINE_ZIP" "$COASTLINE_URL"; then
+  if ! aria2c -c \
+    -x "$ARIA2C_CONNECTIONS" \
+    -s "$ARIA2C_CONNECTIONS" \
+    -k 1M \
+    --dir="$TILEMAKER_DIR" \
+    --out="water-polygons-split-4326.zip" \
+    "$COASTLINE_URL"; then
     rm -f "$COASTLINE_ZIP"
-    error "Coastline download failed."
+    error "Coastline download failed. Resume manually with:\n        aria2c -c -x 16 -s 16 -k 1M --dir=$TILEMAKER_DIR --out=water-polygons-split-4326.zip $COASTLINE_URL"
   fi
 
   log "Extracting coastline shapefile..."
